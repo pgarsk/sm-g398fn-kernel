@@ -1,2 +1,4 @@
 # GCC 4.9 from AOSP (GPLv3 binaries) stays local, not in the repo; see .github/README.md
 /toolchain/
+# Images from .github/ci/build.sh
+/out/

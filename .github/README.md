@@ -25,6 +25,21 @@ make -j"$(nproc)" HOSTCFLAGS=-fcommon KCFLAGS=-DCONFIG_ALLOW_OLD_GCC_ARM64
 
 The kernel ends up in `arch/arm64/boot/Image`.
 
+## Releases
+
+For every published release, [`workflows/release.yml`](workflows/release.yml) builds the kernel and attaches:
+
+| File | Use |
+|---|---|
+| `boot.img` | Heimdall: `heimdall flash --BOOT boot.img` |
+| `SM-G398FN-<tag>-AP.tar.md5` | Odin, AP slot |
+| `kernel.config` | the configuration used |
+| `SHA256SUMS` | checksums |
+
+Flash in download mode (Volume Down + Home + Power, then Volume Up). The image carries neither Samsung's signature nor an AVB footer, so it only boots with an unlocked bootloader and a vbmeta already flashed with `flags=2` (verification off). Flashing stock firmware with Odin brings back a vbmeta with `flags=0`. If the phone stays at "An error has occurred while updating" after flashing: flash again, then run `heimdall close-pc-screen`.
+
+The steps are in [`ci/build.sh`](ci/build.sh), which runs locally as well: Samsung's defconfig plus the hardening, slimming and performance changes in `ci/config/*.sh`. [`ci/mkbootimg.py`](ci/mkbootimg.py) writes the boot image with the header values of the CWF1 stock image (header v1, kernel only, no ramdisk, no DTB), so the CI needs no Samsung files. Started by hand (*Run workflow*), the workflow builds the selected branch as an artifact only; given a tag, it attaches the images to that existing release.
+
 ## License
 
 GPL-2.0-only, like the Linux kernel itself; see [COPYING](../COPYING). This covers all changes in this repository too.
@@ -43,7 +58,12 @@ git init toolchain/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
 cd toolchain/gcc/linux-x86/aarch64/aarch64-linux-android-4.9
 git fetch --depth 1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 a3a5fbd5089af2412289cdc5f61458388b2fb6c3
 git checkout FETCH_HEAD
+# python3 instead of Python 2, and no 3 s sleep per call (as in Samsung's copy)
+sed -i -e '1s|^#!/usr/bin/python$|#!/usr/bin/env python3|' -e '/^import time$/d' -e '/^ *time\.sleep(3)$/d' \
+    bin/aarch64-linux-android-gcc bin/aarch64-linux-android-g++
 ```
 
 - Binaries: AOSP [`platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9`](https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+/a3a5fbd5089a), commit `a3a5fbd5089a` from October 2019, the last one that still has GCC. Samsung's copy is a different build from the same sources (identical `repo.prop`).
 - Source: according to `repo.prop`, [`toolchain/gcc`](https://android.googlesource.com/toolchain/gcc/+/a9d5e6fb22fe3283eeecfb97211a12c072a7b469) `a9d5e6fb22fe3283eeecfb97211a12c072a7b469` and [`toolchain/binutils`](https://android.googlesource.com/toolchain/binutils/+/bd24d23f081feb4eb1438c56ace4ae91778ae6be) `bd24d23f081feb4eb1438c56ace4ae91778ae6be`, built with [`toolchain/build`](https://android.googlesource.com/toolchain/build/+/58be6006bb71abb97d7cdff7be3e73d55bbc22b8) `58be6006bb71abb97d7cdff7be3e73d55bbc22b8`. The other sources (gmp, mpfr, mpc, isl and more) are listed in `repo.prop` too and live under [android.googlesource.com/toolchain](https://android.googlesource.com/toolchain/).
+
+In AOSP's build, `aarch64-linux-android-gcc` and `-g++` are Python wrappers that want Python 2 and sleep 3 s on every call; Samsung's copy runs them under python3 without the sleep, hence the `sed` above (`ci/build.sh` does the same). Apart from these wrappers and the `gcc`, `g++` and `cpp` drivers, which differ only in temporary build paths, every file is byte-identical to Samsung's copy, `cc1`, `as` and `ld` included.

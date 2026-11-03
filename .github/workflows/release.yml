@@ -1,0 +1,88 @@
+# Build the kernel for every published release and attach the flashable images to it.
+# Started by hand it builds the selected branch and keeps the images as a workflow artifact only,
+# unless a release tag is given.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach the images to (empty = artifact only)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    # Pinned: the 4.4 host tools build with GCC 13 (HOSTCFLAGS=-fcommon drops the tree's -std=gnu89)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      name: ${{ steps.build.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || github.ref }}
+          persist-credentials: false
+
+      - name: Host packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends bc bison flex libssl-dev
+
+      - name: Build
+        id: build
+        env:
+          # Same version string on every run of a commit: no runner user/host, commit time as build time
+          KBUILD_BUILD_USER: ${{ github.repository_owner }}
+          KBUILD_BUILD_HOST: github-actions
+        run: |
+          ref=${TAG:-$(git rev-parse --short=12 HEAD)}
+          name=SM-G398FN-${ref//[^A-Za-z0-9._-]/_}
+          # -g<sha12> as in a local build; setlocalversion would drop it at an annotated tag
+          printf -- '-g%.12s\n' "$(git rev-parse HEAD)" > .scmversion
+          # RFC 2822 so that gen_initramfs_list.sh's date -d can read it, too
+          NAME=$name KBUILD_BUILD_TIMESTAMP="$(git log -1 --format=%cd --date=rfc)" .github/ci/build.sh "$RUNNER_TEMP/out"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $(cat include/config/kernel.release)"
+            echo '```'
+            cat "$RUNNER_TEMP/out/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          overwrite: true
+
+  attach:
+    # Only this job can write to the repo, and it runs neither the toolchain nor the build
+    needs: build
+    if: github.event.release.tag_name || inputs.tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # gh release upload
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.name }}
+          path: ${{ runner.temp }}/out
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP"/out/* --clobber --repo "$GITHUB_REPOSITORY"
