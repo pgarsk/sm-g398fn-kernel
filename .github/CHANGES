@@ -484,3 +484,5 @@
 2026-11-03 netlink: make sure we allow at least one dump skb
 2026-11-03 netlink: Fix rmem check in netlink_broadcast_deliver()
 2026-11-03 Drop the in-tree GCC 4.9, add README with origin and licenses
+2022-07-26 netfilter: nf_queue: do not allow packet truncation below transport header offset
+2024-05-15 netfilter: nfnetlink_queue: acquire rcu_read_lock() in instance_destroy_rcu()
